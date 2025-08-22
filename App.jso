@@ -1,0 +1,139 @@
+import React, { useEffect, useState } from "react";
+import {
+  View,
+  Text,
+  TextInput,
+  Button,
+  ScrollView,
+  Alert,
+} from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as Location from "expo-location";
+import { Camera } from "expo-camera"; // ✅ tambahkan
+
+import { geocodeDepok } from "./utils/geo";
+import { STORAGE_HISTORY, STORAGE_TODAY } from "./constants/depok";
+
+import Scanner from "./components/Scanner";
+import TodayList from "./components/TodayList";
+import HistoryList from "./components/HistoryList";
+
+export default function App() {
+  const [query, setQuery] = useState("");
+  const [today, setToday] = useState([]);
+  const [history, setHistory] = useState([]);
+  const [location, setLocation] = useState(null);
+
+  const [scannerOn, setScannerOn] = useState(false);
+  const [hasCam, setHasCam] = useState(null);
+
+  // 🔹 Minta izin kamera sekali
+  useEffect(() => {
+    (async () => {
+      const { status } = await Camera.requestCameraPermissionsAsync();
+      setHasCam(status === "granted");
+    })();
+  }, []);
+
+  // 🔹 Load lokasi GPS sekali saat start
+  useEffect(() => {
+    (async () => {
+      let { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== "granted") {
+        Alert.alert("Izin lokasi ditolak");
+        return;
+      }
+      let loc = await Location.getCurrentPositionAsync({});
+      setLocation({
+        lat: loc.coords.latitude,
+        lon: loc.coords.longitude,
+      });
+    })();
+  }, []);
+
+  // 🔹 Load storage saat awal
+  useEffect(() => {
+    (async () => {
+      const todayStr = await AsyncStorage.getItem(STORAGE_TODAY);
+      const historyStr = await AsyncStorage.getItem(STORAGE_HISTORY);
+      if (todayStr) setToday(JSON.parse(todayStr));
+      if (historyStr) setHistory(JSON.parse(historyStr));
+    })();
+  }, []);
+
+  // 🔹 Simpan setiap kali update
+  useEffect(() => {
+    AsyncStorage.setItem(STORAGE_TODAY, JSON.stringify(today));
+  }, [today]);
+
+  useEffect(() => {
+    AsyncStorage.setItem(STORAGE_HISTORY, JSON.stringify(history));
+  }, [history]);
+
+  // 🔹 Tambah tujuan manual
+  const addDestination = async () => {
+    if (!query.trim()) return;
+    const loc = await geocodeDepok(query.trim());
+    if (!loc) {
+      Alert.alert("Alamat tidak valid atau di luar Depok");
+      return;
+    }
+    const newItem = { ...loc, id: Date.now().toString() };
+
+    setToday((prev) => [...prev, newItem]);
+    setHistory((prev) => [newItem, ...prev.filter((x) => x.label !== newItem.label)]);
+    setQuery("");
+  };
+
+  // 🔹 Tambah dari scanner
+  const onScanned = async ({ data }) => {
+    setScannerOn(false);
+    const loc = await geocodeDepok(data);
+    if (!loc) {
+      Alert.alert("QR tidak valid atau di luar Depok");
+      return;
+    }
+    const newItem = { ...loc, id: Date.now().toString() };
+    setToday((prev) => [...prev, newItem]);
+    setHistory((prev) => [newItem, ...prev.filter((x) => x.label !== newItem.label)]);
+  };
+
+  return (
+    <ScrollView style={{ flex: 1, padding: 15, marginTop: 30 }}>
+      <Text style={{ fontSize: 20, fontWeight: "bold", marginBottom: 10 }}>
+        SmartKurir 🚚
+      </Text>
+
+      {/* Input alamat */}
+      <TextInput
+        value={query}
+        onChangeText={setQuery}
+        placeholder="Masukkan alamat tujuan"
+        style={{
+          borderWidth: 1,
+          borderColor: "#aaa",
+          padding: 8,
+          borderRadius: 8,
+          marginBottom: 10,
+        }}
+      />
+      <Button title="Tambah Tujuan" onPress={addDestination} />
+
+      {/* Tombol scan QR */}
+      <View style={{ marginVertical: 10 }}>
+        <Button title="Scan QR" onPress={() => setScannerOn(true)} />
+      </View>
+
+      {/* Scanner */}
+      {scannerOn && (
+        <Scanner hasCam={hasCam} onScanned={onScanned} onClose={() => setScannerOn(false)} />
+      )}
+
+      {/* Daftar tujuan hari ini */}
+      <TodayList data={today} current={location} onUpdate={setToday} />
+
+      {/* Riwayat alamat */}
+      <HistoryList data={history} onSelect={(item) => setQuery(item.label)} />
+    </ScrollView>
+  );
+}
